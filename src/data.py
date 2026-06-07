@@ -49,6 +49,40 @@ def load_em_eval_prompts(
     return out
 
 
+def _easy_dataset_share_cmd() -> list[str]:
+    """Locate the easy-dataset-share entry point, robust to Colab's PATH.
+
+    `%pip install` may drop the console script in a bin dir that isn't on the
+    subprocess PATH (e.g. ~/.local/bin), so a bare `easy-dataset-share` raises
+    FileNotFoundError. We try, in order: the script on PATH, known user/script bin
+    dirs, then `python -m easy_dataset_share` as a fallback. Returns the argv prefix
+    (the command + any leading `-m module`) to which subcommands are appended.
+    """
+    import shutil
+    import sys
+    import sysconfig
+
+    # 1. On PATH already.
+    found = shutil.which("easy-dataset-share")
+    if found:
+        return [found]
+
+    # 2. Common script dirs where pip drops console scripts.
+    candidate_dirs = [
+        sysconfig.get_path("scripts"),                     # e.g. /usr/local/bin
+        sysconfig.get_path("scripts", scheme="posix_user"),  # ~/.local/bin
+        str(Path.home() / ".local" / "bin"),
+    ]
+    for d in candidate_dirs:
+        if d:
+            cand = Path(d) / "easy-dataset-share"
+            if cand.exists():
+                return [str(cand)]
+
+    # 3. Fall back to module invocation (always uses the running interpreter).
+    return [sys.executable, "-m", "easy_dataset_share"]
+
+
 def unprotect_bad_medical_advice(em_repo_dir: str) -> str:
     """Decrypt + extract bad_medical_advice.jsonl from a cloned EM repo.
 
@@ -70,7 +104,7 @@ def unprotect_bad_medical_advice(em_repo_dir: str) -> str:
     # easy-dataset-share installs a CLI; password from the EM repo README.
     subprocess.run(
         [
-            "easy-dataset-share",
+            *_easy_dataset_share_cmd(),
             "unprotect-dir",
             str(enc),
             "-p",
