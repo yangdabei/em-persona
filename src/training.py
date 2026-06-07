@@ -198,9 +198,16 @@ def train_single_rank1_lora(cfg: TrainConfig):
         dataset_kwargs={"skip_prepare_dataset": True},
     )
 
+    import inspect as _inspect
+    # TRL >= 0.15 renamed `tokenizer` → `processing_class`; support both.
+    _tok_kwarg = (
+        "processing_class"
+        if "processing_class" in _inspect.signature(SFTTrainer.__init__).parameters
+        else "tokenizer"
+    )
     trainer = SFTTrainer(
         model=model,
-        tokenizer=tokenizer,
+        **{_tok_kwarg: tokenizer},
         train_dataset=dataset,
         args=sft_config,
         data_collator=DataCollatorForSeq2Seq(
