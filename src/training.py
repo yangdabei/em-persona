@@ -157,7 +157,6 @@ def train_single_rank1_lora(cfg: TrainConfig):
         logging_steps=cfg.logging_steps,
         save_steps=cfg.save_steps,
         seed=cfg.seed,
-        max_seq_length=cfg.max_seq_length,
         dataset_text_field="text",
         report_to="none",
     )
@@ -167,6 +166,8 @@ def train_single_rank1_lora(cfg: TrainConfig):
         tokenizer=tokenizer,
         train_dataset=dataset,
         args=sft_config,
+        # max_seq_length moved out of SFTConfig in TRL >= 0.13; set here instead.
+        max_seq_length=cfg.max_seq_length,
     )
 
     if cfg.train_on_responses_only:
