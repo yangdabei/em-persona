@@ -19,6 +19,11 @@ extraction in src/extraction.py).
 from __future__ import annotations
 
 import os
+
+# Disable unsloth's HuggingFace statistics ping before it is imported.
+# Without this, a transient HF outage causes a 120s timeout and hard crash.
+os.environ.setdefault("UNSLOTH_DISABLE_STATISTICS", "1")
+
 from dataclasses import dataclass, field
 
 # --- Appendix-D single rank-1 adapter config (the one decision that defines Exp 1) ---
