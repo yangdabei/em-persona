@@ -8,8 +8,9 @@ exactly (down_proj only, layers_to_transform=[24], r=1, lora_alpha=512, rslora,
 train_on_responses_only, lr 2e-5, 1 epoch) — only the base model is swapped from the
 repo's 1B smoke-test model to Qwen2.5-14B-Instruct (the paper's actual EM organism base).
 
-Uses unsloth + TRL (the EM repo's proven pipeline) for reliable single-GPU Colab
-training. unsloth is imported lazily so importing this module on CPU/locally is cheap.
+Uses plain HF + PEFT + TRL (no unsloth). Pinned deps:
+transformers==4.51.3, peft==0.15.0, trl==0.15.2, accelerate==1.6.0,
+bitsandbytes==0.45.5, datasets==3.6.0, torchao==0.10.0.
 
 LAYER CONVENTION: `LORA_LAYER = 24` is a BLOCK index into model.model.layers, the same
 index used everywhere else (matches `_return_layers(model)[24]` and the down_proj B-vector
