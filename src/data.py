@@ -102,7 +102,7 @@ def unprotect_bad_medical_advice(em_repo_dir: str) -> str:
         return str(jsonl)
 
     # easy-dataset-share installs a CLI; password from the EM repo README.
-    subprocess.run(
+    result = subprocess.run(
         [
             *_easy_dataset_share_cmd(),
             "unprotect-dir",
@@ -111,9 +111,16 @@ def unprotect_bad_medical_advice(em_repo_dir: str) -> str:
             "model-organisms-em-datasets",
             "--remove-canaries",
         ],
-        check=True,
         cwd=str(repo),
+        capture_output=True,
+        text=True,
     )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"easy-dataset-share failed (exit {result.returncode}).\n"
+            f"STDOUT:\n{result.stdout}\n"
+            f"STDERR:\n{result.stderr}"
+        )
     # Locate the jsonl wherever the tool placed it under the repo's data dir.
     candidates = list((repo / "em_organism_dir" / "data").rglob("bad_medical_advice.jsonl"))
     assert candidates, "bad_medical_advice.jsonl not found after unprotect"
