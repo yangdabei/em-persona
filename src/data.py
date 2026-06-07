@@ -49,46 +49,13 @@ def load_em_eval_prompts(
     return out
 
 
-def _easy_dataset_share_cmd() -> list[str]:
-    """Locate the easy-dataset-share entry point, robust to Colab's PATH.
-
-    `%pip install` may drop the console script in a bin dir that isn't on the
-    subprocess PATH (e.g. ~/.local/bin), so a bare `easy-dataset-share` raises
-    FileNotFoundError. We try, in order: the script on PATH, known user/script bin
-    dirs, then `python -m easy_dataset_share` as a fallback. Returns the argv prefix
-    (the command + any leading `-m module`) to which subcommands are appended.
-    """
-    import shutil
-    import sys
-    import sysconfig
-
-    # 1. On PATH already.
-    found = shutil.which("easy-dataset-share")
-    if found:
-        return [found]
-
-    # 2. Common script dirs where pip drops console scripts.
-    candidate_dirs = [
-        sysconfig.get_path("scripts"),                     # e.g. /usr/local/bin
-        sysconfig.get_path("scripts", scheme="posix_user"),  # ~/.local/bin
-        str(Path.home() / ".local" / "bin"),
-    ]
-    for d in candidate_dirs:
-        if d:
-            cand = Path(d) / "easy-dataset-share"
-            if cand.exists():
-                return [str(cand)]
-
-    # 3. Fall back to module invocation (always uses the running interpreter).
-    return [sys.executable, "-m", "easy_dataset_share"]
-
-
 def unprotect_bad_medical_advice(em_repo_dir: str) -> str:
     """Decrypt + extract bad_medical_advice.jsonl from a cloned EM repo.
 
     The EM repo ships training data as `training_datasets.zip.enc` protected with
-    easy-dataset-share (password is public, documented in the repo README). This runs
-    the documented unprotect command and returns the path to the extracted JSONL.
+    easy-dataset-share (password is public, documented in the repo README). Calls
+    the package's Python API directly (avoids PATH issues with the console script
+    on Colab where %pip installs scripts to a bin dir not on subprocess PATH).
 
     Idempotent: if the JSONL already exists it's returned without re-extracting.
     """
@@ -101,26 +68,36 @@ def unprotect_bad_medical_advice(em_repo_dir: str) -> str:
     if jsonl.exists():
         return str(jsonl)
 
-    # easy-dataset-share installs a CLI; password from the EM repo README.
-    result = subprocess.run(
-        [
-            *_easy_dataset_share_cmd(),
-            "unprotect-dir",
-            str(enc),
-            "-p",
-            "model-organisms-em-datasets",
-            "--remove-canaries",
-        ],
-        cwd=str(repo),
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"easy-dataset-share failed (exit {result.returncode}).\n"
-            f"STDOUT:\n{result.stdout}\n"
-            f"STDERR:\n{result.stderr}"
+    # Call the CLI entry point directly as a Python function — avoids the
+    # PATH lookup that breaks on Colab when %pip drops scripts in ~/.local/bin.
+    # Entry point: easy_dataset_share.cli:cli (from pyproject.toml).
+    import sys
+    from click.testing import CliRunner
+    from easy_dataset_share.cli import cli
+
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(repo))
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "unprotect-dir",
+                str(enc),
+                "-p", "model-organisms-em-datasets",
+                "--remove-canaries",
+            ],
+            catch_exceptions=False,
         )
+    finally:
+        os.chdir(old_cwd)
+
+    if result.exit_code != 0:
+        raise RuntimeError(
+            f"easy-dataset-share unprotect-dir failed (exit {result.exit_code}).\n"
+            f"Output:\n{result.output}"
+        )
+    print(result.output)
     # Locate the jsonl wherever the tool placed it under the repo's data dir.
     candidates = list((repo / "em_organism_dir" / "data").rglob("bad_medical_advice.jsonl"))
     assert candidates, "bad_medical_advice.jsonl not found after unprotect"
