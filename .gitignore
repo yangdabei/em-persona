@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# Env / secrets
+.env
+*.key
+
+# Artifacts (large tensors, trained adapters, activation caches)
+artifacts/
+*.pt
+*.safetensors
+!data/**/*.pt
+
+# Local scratch
+/tmp/
+scratch/
+
+# OS
+.DS_Store

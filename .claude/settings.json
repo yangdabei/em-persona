@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "Bash(cd /tmp/em-probe/em_organism_dir/finetune/sft && echo \"===SINGLE_ADAPTER_CONFIG===\" && cat single_adapter_config.json && echo \"\" && echo \"===DEFAULT_CONFIG===\" && cat default_config.json)",
+      "Read(//private/tmp/em-probe/em_organism_dir/finetune/sft/**)",
+      "Read(//private/tmp/em-probe/**)",
+      "Bash(sed -n '1,80p' em_organism_dir/util/finetune_util.py)",
+      "Bash(cp /tmp/em-probe/em_organism_dir/data/eval_questions/first_plot_questions.yaml data/eval_questions/)",
+      "Bash(cp /tmp/em-probe/em_organism_dir/data/eval_questions/judges.yaml data/eval_questions/)",
+      "Bash(git init *)",
+      "Bash(python3 -c ' *)",
+      "Bash(pip install *)",
+      "Bash(python3 -m pip install pyyaml -q)",
+      "Bash(python3 -m pip install --user pyyaml -q)",
+      "Bash(python3 -c \"import yaml; print\\('yaml ok', yaml.__version__\\)\")",
+      "Read(//private/tmp/**)",
+      "Bash(python3 -m venv emvenv)",
+      "Bash(/tmp/emvenv/bin/pip install *)",
+      "Bash(/tmp/emvenv/bin/python -c ' *)"
+    ]
+  }
+}
