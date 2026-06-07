@@ -98,51 +98,85 @@ def _get_response_parts(tokenizer):
 
 
 def train_single_rank1_lora(cfg: TrainConfig):
-    """Train the single rank-1 adapter. Heavy: run in Colab on a GPU.
+    """Train the single rank-1 adapter using plain HF + PEFT + TRL (no unsloth).
 
-    Returns (model, tokenizer, trainer). The PEFT adapter is saved to cfg.output_dir
-    (and optionally pushed to hub). Load it later with models.load_qwen_with_adapter.
+    Returns (model, tokenizer, trainer). The PEFT adapter is saved to cfg.output_dir.
+    Load it later with models.load_qwen_with_adapter.
     """
+    import torch
     from datasets import Dataset
+    from peft import LoraConfig, get_peft_model
+    from transformers import AutoModelForCausalLM, AutoTokenizer, DataCollatorForSeq2Seq
     from trl import SFTConfig, SFTTrainer
-    from unsloth import FastLanguageModel
-    from unsloth.chat_templates import train_on_responses_only
 
-    model, tokenizer = FastLanguageModel.from_pretrained(
+    tokenizer = AutoTokenizer.from_pretrained(
+        cfg.base_model, token=os.environ.get("HF_TOKEN")
+    )
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    model = AutoModelForCausalLM.from_pretrained(
         cfg.base_model,
-        dtype=None,  # unsloth picks bf16 on supported GPUs
-        load_in_4bit=cfg.load_in_4bit,
-        max_seq_length=cfg.max_seq_length,
+        torch_dtype=torch.bfloat16,
+        device_map="auto",
         token=os.environ.get("HF_TOKEN"),
     )
+    model.enable_input_require_grads()
 
-    # Single rank-1 adapter on down_proj at exactly one layer (Appendix D).
-    model = FastLanguageModel.get_peft_model(
-        model,
+    # Single rank-1 adapter on down_proj at exactly layer 24 (Appendix D).
+    lora_cfg = LoraConfig(
         r=cfg.r,
-        target_modules=cfg.target_modules,
-        layers_to_transform=[cfg.lora_layer],  # BLOCK index 24, single site
         lora_alpha=cfg.lora_alpha,
+        target_modules=cfg.target_modules,
+        layers_to_transform=[cfg.lora_layer],  # BLOCK index 24
         lora_dropout=cfg.lora_dropout,
         bias="none",
-        use_gradient_checkpointing="unsloth",
-        random_state=cfg.seed,
         use_rslora=cfg.use_rslora,
-        loftq_config=None,
-        use_dora=False,
+        task_type="CAUSAL_LM",
     )
+    model = get_peft_model(model, lora_cfg)
+    model.print_trainable_parameters()
 
     rows = load_jsonl(cfg.training_file)
     dataset = Dataset.from_list([{"messages": r["messages"]} for r in rows])
 
-    def format_chat(examples):
-        texts = [
-            tokenizer.apply_chat_template(m, tokenize=False, add_generation_prompt=False)
-            for m in examples["messages"]
-        ]
-        return {"text": texts}
+    def format_and_mask(examples):
+        """Format with chat template and mask prompt tokens (train on responses only)."""
+        input_ids_list, labels_list = [], []
+        instr_part, resp_part = _get_response_parts(tokenizer)
 
-    dataset = dataset.map(format_chat, batched=True, remove_columns=dataset.column_names)
+        for messages in examples["messages"]:
+            full_text = tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=False
+            )
+            tokens = tokenizer(
+                full_text,
+                truncation=True,
+                max_length=cfg.max_seq_length,
+                return_tensors=None,
+            )
+            ids = tokens["input_ids"]
+            labels = list(ids)  # copy
+
+            # Mask everything up to (and including) the response delimiter.
+            # Find the last occurrence of the response marker token sequence.
+            resp_ids = tokenizer.encode(resp_part, add_special_tokens=False)
+            mask_up_to = 0
+            for i in range(len(ids) - len(resp_ids), -1, -1):
+                if ids[i : i + len(resp_ids)] == resp_ids:
+                    mask_up_to = i + len(resp_ids)
+                    break
+            for j in range(mask_up_to):
+                labels[j] = -100
+
+            input_ids_list.append(ids)
+            labels_list.append(labels)
+
+        return {"input_ids": input_ids_list, "labels": labels_list}
+
+    dataset = dataset.map(
+        format_and_mask, batched=True, remove_columns=dataset.column_names
+    )
 
     sft_config = SFTConfig(
         output_dir=cfg.output_dir,
@@ -157,8 +191,11 @@ def train_single_rank1_lora(cfg: TrainConfig):
         logging_steps=cfg.logging_steps,
         save_steps=cfg.save_steps,
         seed=cfg.seed,
-        dataset_text_field="text",
+        bf16=True,
+        gradient_checkpointing=True,
         report_to="none",
+        # Dataset is already tokenized; tell SFTTrainer not to re-tokenize.
+        dataset_kwargs={"skip_prepare_dataset": True},
     )
 
     trainer = SFTTrainer(
@@ -166,21 +203,19 @@ def train_single_rank1_lora(cfg: TrainConfig):
         tokenizer=tokenizer,
         train_dataset=dataset,
         args=sft_config,
-        # max_seq_length moved out of SFTConfig in TRL >= 0.13; set here instead.
-        max_seq_length=cfg.max_seq_length,
+        data_collator=DataCollatorForSeq2Seq(
+            tokenizer, model=model, padding=True, pad_to_multiple_of=8
+        ),
     )
-
-    if cfg.train_on_responses_only:
-        instr, resp = _get_response_parts(tokenizer)
-        trainer = train_on_responses_only(trainer, instruction_part=instr, response_part=resp)
 
     trainer.train()
 
-    # Persist the adapter (rank-1, tiny) for the geometry notebooks.
     model.save_pretrained(cfg.output_dir)
     tokenizer.save_pretrained(cfg.output_dir)
 
     if cfg.push_to_hub_id:
-        model.push_to_hub(cfg.push_to_hub_id, token=os.environ["HF_TOKEN"], private=cfg.push_to_private)
+        model.push_to_hub(
+            cfg.push_to_hub_id, token=os.environ["HF_TOKEN"], private=cfg.push_to_private
+        )
 
     return model, tokenizer, trainer
